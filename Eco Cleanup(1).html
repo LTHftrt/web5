@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Eco Cleanup</title>
+<style>
+:root{--bg:#e8f5e9;--card:#fff;--fg:#1b3a24;--accent:#2e7d32;--sky:#bbdefb;--ground:#a1887f;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12201a;--card:#1d3027;--fg:#e4f2e8;--accent:#66bb6a;--sky:#1e3a52;--ground:#5d4037}}
+:root[data-theme="dark"]{--bg:#12201a;--card:#1d3027;--fg:#e4f2e8;--accent:#66bb6a;--sky:#1e3a52;--ground:#5d4037}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,"Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--fg);display:flex;justify-content:center;padding:12px;min-height:100vh}
+#app{width:100%;max-width:600px}
+.screen{background:var(--card);border-radius:16px;padding:20px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.15)}
+.hidden{display:none}
+h1,h2{margin:.2em 0 .4em}
+button{font:inherit;background:var(--accent);color:#fff;border:0;border-radius:10px;padding:10px 18px;margin:6px;cursor:pointer}
+label{display:block;margin:12px 0;text-align:left}
+input,select{font:inherit;padding:6px;margin-left:8px;border-radius:6px;border:1px solid var(--accent);background:var(--bg);color:var(--fg)}
+input.focused{background:#fff8e1;color:#333}
+#hud{display:flex;justify-content:space-between;gap:8px;font-weight:600;margin-bottom:8px;flex-wrap:wrap}
+#field{position:relative;height:380px;overflow:hidden;border-radius:12px;background:linear-gradient(var(--sky) 80%,var(--ground) 80%);user-select:none;touch-action:none}
+.item{position:absolute;width:48px;height:48px;font-size:36px;line-height:48px;text-align:center;cursor:grab;touch-action:none}
+.item.drag{cursor:grabbing;transform:scale(1.25);filter:drop-shadow(0 4px 4px rgba(0,0,0,.4))}
+.item.sucked{pointer-events:none;animation:suck .35s forwards}
+@keyframes suck{to{transform:scale(0) rotate(180deg);opacity:0}}
+#bin{position:absolute;right:14px;bottom:10px;width:96px;height:96px;border:3px dashed var(--accent);border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:44px;background:rgba(255,255,255,.35);transition:transform .2s,background .2s}
+#bin small{font-size:13px;font-weight:700}
+#bin.over{transform:scale(1.15);background:rgba(102,187,106,.6)}
+#field.paused .item{opacity:.4;pointer-events:none}
+#timeBar{height:12px;background:var(--bg);border-radius:6px;margin-top:8px;overflow:hidden}
+#timeFill{height:100%;width:100%;background:var(--accent);transition:width .1s linear,background .3s}
+#timeFill.low{background:#e53935}
+#log{list-style:none;padding:0;margin:8px 0 0;font-size:12px;text-align:left;max-height:90px;overflow:hidden;opacity:.85}
+.stats{font-size:18px;margin:12px 0}
+</style>
+</head>
+<body>
+<main id="app">
+
+<section class="screen" id="s-start">
+  <h1>♻️ Eco Cleanup</h1>
+  <p>The park is full of litter, and the clock is ticking! Drag every piece of trash into the bin before time runs out. Careful: animals, plants and food scraps stay out of the bin — each mistake costs 3 seconds.</p>
+  <p><small>Space — pause · R — reshuffle (new layout)</small></p>
+  <button id="btnStart">▶ Play</button>
+  <button id="btnSettings">⚙ Settings</button>
+</section>
+
+<section class="screen hidden" id="s-settings">
+  <h2>Settings</h2>
+  <form name="settings" onsubmit="return false">
+    <label>Player name: <input name="nick" value="Eco Hero" maxlength="12"></label>
+    <label>Difficulty:
+      <select name="diff"><option value="0.8">Easy</option><option value="1" selected>Normal</option><option value="1.4">Hard</option></select>
+    </label>
+    <label>Volume: <input type="range" name="vol" min="0" max="1" step="0.1" value="0.3"></label>
+    <label>Dark theme: <input type="checkbox" name="dark"></label>
+  </form>
+  <button id="btnBack">← Back</button>
+</section>
+
+<section class="screen hidden" id="s-game">
+  <div id="hud">
+    <span id="player">Eco Hero</span>
+    <span>Level: <b id="level">1</b></span>
+    <span>Score: <b id="score">0</b></span>
+    <span>Trash left: <b id="left">0</b></span>
+    <span>⏱ <b id="time">0</b>s</span>
+  </div>
+  <div id="field">
+    <div id="bin"><span id="binIcon">🗑️</span><small id="binCount">0</small></div>
+  </div>
+  <div id="timeBar"><div id="timeFill"></div></div>
+  <ul id="log"></ul>
+  <button id="btnPause">⏸ Pause</button>
+  <button id="btnShuffle">🔀 New layout</button>
+</section>
+
+<section class="screen hidden" id="s-end">
+  <h2 id="endTitle">Clean!</h2>
+  <div class="stats" id="endStats"></div>
+  <button id="btnNext">Next ▶</button>
+  <button id="btnMenu">Menu</button>
+</section>
+
+</main>
+
+<script>
+"use strict";
+// ---------- DOM access ----------
+const screens = document.getElementsByClassName("screen");   // get*: collection
+const field = document.getElementById("field");
+const bin = document.querySelector("#bin");                  // query*: CSS selector
+const logEl = document.querySelector("#log");
+const form = document.forms["settings"];                     // access by name
+const audio = new Audio();                                   // source of the volumechange event
+
+const TRASH = ["🍌", "🥫", "🍾", "📰", "🥤", "🛍️", "👟", "🧃", "🔋"];
+const OTHER = ["🌳", "🐦", "🌸", "🐕", "🍎", "🦋", "🍄", "🐿️"];
+const st = { score: 0, level: 1, left: 0, total: 0, t: 0, tMax: 0, inBin: 0, running: false, paused: false, timer: null, diff: 1 };
+let drag = null;
+
+const delay = ms => new Promise(r => setTimeout(r, ms));    // Promise
+const rnd = a => a[Math.floor(Math.random() * a.length)];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function show(id) { for (const s of screens) s.classList.toggle("hidden", s.id !== id); }
+
+// ---------- Sound ----------
+let ac;
+function beep(freq) {
+  try {
+    ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(), g = ac.createGain();
+    g.gain.value = audio.volume * 0.3; o.frequency.value = freq;
+    o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.1);
+  } catch (e) { /* audio unavailable */ }
+}
+
+// ---------- Log: prepend / removeChild ----------
+function addLog(text) {
+  const li = document.createElement("li");
+  li.textContent = text;
+  logEl.prepend(li);
+  if (logEl.children.length > 5) logEl.removeChild(logEl.lastElementChild);
+}
+
+// ---------- HUD ----------
+function updateHud() {
+  document.getElementById("score").innerText = st.score;
+  document.getElementById("level").textContent = st.level;
+  document.getElementById("left").textContent = st.left;
+  document.getElementById("time").textContent = Math.max(0, st.t).toFixed(1);
+  document.getElementById("binCount").textContent = st.inBin;
+  const f = document.getElementById("timeFill");
+  f.style.width = clamp(st.t / st.tMax * 100, 0, 100) + "%";
+  f.classList.toggle("low", st.t < st.tMax * 0.25);
+}
+
+// ---------- Random layout ----------
+function newLayout() {
+  field.querySelectorAll(".item").forEach(n => n.remove());    // remove
+  const n = Math.min(4 + st.level * 2, 14), m = Math.min(4 + st.level, 10);
+  Object.assign(st, { total: n, left: n, inBin: 0, tMax: Math.round(n * 3.5 / st.diff) + 5 });
+  st.t = st.tMax;
+  const W = field.clientWidth, H = field.clientHeight * 0.72, placed = [];
+  const place = (emoji, kind) => {
+    let x, y, tries = 0;
+    do { x = Math.random() * (W - 56); y = Math.random() * (H - 56); tries++; }
+    while (tries < 60 && (placed.some(p => Math.hypot(p.x - x, p.y - y) < 56) || (x > W - 130 && y > H - 90)));
+    placed.push({ x, y });
+    const el = document.createElement("div");
+    el.className = "item"; el.textContent = emoji;
+    el.setAttribute("data-kind", kind);                         // attribute via method
+    el.dataset.x = x; el.dataset.y = y;
+    el.style.left = x + "px"; el.style.top = y + "px";
+    field.append(el);                                            // append
+  };
+  for (let i = 0; i < n; i++) place(rnd(TRASH), "trash");
+  for (let i = 0; i < m; i++) place(rnd(OTHER), "other");
+  const icon = document.getElementById("binIcon");
+  const fresh = Object.assign(document.createElement("span"), { id: "binIcon", textContent: "🗑️" });
+  icon.replaceWith(fresh);                                       // replaceWith
+  updateHud();
+}
+
+function startLevel() {
+  show("s-game");                                                // the field must be visible, otherwise its size is 0
+  newLayout();
+  Object.assign(st, { running: true, paused: false });
+  field.classList.remove("paused");
+  document.getElementById("btnPause").textContent = "⏸ Pause";
+  clearInterval(st.timer);
+  st.timer = setInterval(tick, 100);
+  show("s-game");
+}
+
+function tick() {
+  if (!st.running || st.paused) return;
+  st.t -= 0.1;
+  updateHud();
+  if (st.t <= 0) finish(st.left === 0);
+}
+
+function togglePause() {
+  if (!st.running) return;
+  st.paused = !st.paused;
+  field.classList.toggle("paused", st.paused);
+  document.getElementById("btnPause").textContent = st.paused ? "▶ Resume" : "⏸ Pause";
+}
+
+// ---------- Drag & drop (mouse + touch) ----------
+const pt = e => (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+function overBin(el) {
+  const a = el.getBoundingClientRect(), b = bin.getBoundingClientRect();
+  const cx = a.left + a.width / 2, cy = a.top + a.height / 2;
+  return cx > b.left && cx < b.right && cy > b.top && cy < b.bottom;
+}
+function dragStart(e) {
+  const el = e.target.closest(".item");
+  if (!el || !st.running || st.paused || el.classList.contains("sucked")) return;
+  if (e.cancelable) e.preventDefault();
+  const p = pt(e), r = el.getBoundingClientRect();
+  drag = { el, dx: p.x - r.left, dy: p.y - r.top };
+  el.classList.add("drag"); el.style.zIndex = 10;
+  addLog(`${e.type} on ${el.textContent} (${el.dataset.kind}), t=${Math.round(e.timeStamp)}ms`);
+}
+function dragMove(e) {
+  if (!drag) return;
+  e.preventDefault();
+  const p = pt(e), f = field.getBoundingClientRect();
+  drag.el.style.left = clamp(p.x - f.left - drag.dx, 0, f.width - 48) + "px";
+  drag.el.style.top = clamp(p.y - f.top - drag.dy, 0, f.height - 48) + "px";
+  bin.classList.toggle("over", overBin(drag.el));
+}
+function dragEnd() {
+  if (!drag) return;
+  const { el } = drag; drag = null;
+  el.classList.remove("drag"); el.style.zIndex = ""; bin.classList.remove("over");
+  if (!overBin(el)) return;
+  if (el.dataset.kind === "trash") {
+    el.classList.add("sucked");                                  // triggers the suck animation
+    st.left--; st.inBin++; st.score += 10 * st.level;
+    beep(500 + st.inBin * 40); updateHud();
+    if (st.left === 0) field.dispatchEvent(new CustomEvent("cleanedup", { bubbles: true, detail: { level: st.level } }));
+  } else {
+    el.style.transition = "left .4s, top .4s";                   // bounce back
+    el.style.left = el.dataset.x + "px"; el.style.top = el.dataset.y + "px";
+    st.t -= 3; beep(120); updateHud();
+    addLog(`${el.textContent} is not trash! −3 s`);
+  }
+}
+field.addEventListener("mousedown", dragStart);
+field.addEventListener("touchstart", dragStart, { passive: false });
+document.addEventListener("mousemove", dragMove);
+document.addEventListener("touchmove", dragMove, { passive: false });
+document.addEventListener("mouseup", dragEnd);
+document.addEventListener("touchend", dragEnd);
+document.addEventListener("touchcancel", dragEnd);
+
+// ---------- Finish ----------
+function finish(won) {
+  if (!st.running) return;
+  st.running = false; clearInterval(st.timer);
+  if (won) st.score += Math.ceil(Math.max(st.t, 0)) * 2;
+  const scr = document.getElementById("s-end");
+  const newH = document.createElement("h2"); newH.id = "endTitle";
+  newH.textContent = won ? `Level ${st.level} cleaned! 🎉` : "Time's up! 😢";
+  scr.replaceChild(newH, document.getElementById("endTitle"));  // replaceChild
+  const stats = document.getElementById("endStats");
+  stats.textContent = won ? `${form.nick.value}: ${st.score} pts, ${st.t.toFixed(1)}s to spare`
+                          : `${st.left} piece(s) of trash left. Score: ${st.score}`;
+  scr.querySelectorAll(".extra").forEach(n => n.remove());
+  const medal = Object.assign(document.createElement("div"), { className: "extra", textContent: won ? "🏅" : "🗑️" });
+  const tip = Object.assign(document.createElement("p"), { className: "extra", textContent: "Tip: always sort your waste!" });
+  scr.insertBefore(medal, stats);                                // insertBefore
+  stats.after(tip);                                              // after
+  const next = document.getElementById("btnNext");
+  next.textContent = won ? "Next level ▶" : "Try again ↻";
+  next.dataset.won = won;
+  delay(700).then(() => show("s-end"));                          // Promise
+}
+
+// ---------- Other events ----------
+document.getElementById("btnStart").onclick = () => {            // on* property
+  Object.assign(st, { score: 0, level: 1 });
+  document.getElementById("player").textContent = form.nick.value;
+  startLevel();
+};
+document.getElementById("btnSettings").onclick = () => show("s-settings");
+document.getElementById("btnBack").onclick = () => show("s-start");
+document.getElementById("btnMenu").onclick = () => show("s-start");
+document.getElementById("btnPause").addEventListener("click", togglePause);  // addEventListener
+document.getElementById("btnShuffle").addEventListener("click", () => { if (st.running) { newLayout(); addLog("New layout"); } });
+document.getElementById("btnNext").addEventListener("click", e => {
+  if (e.target.dataset.won === "true") st.level++; else Object.assign(st, { score: 0, level: 1 });
+  startLevel();                                                  // every restart gets a new random layout
+});
+
+document.addEventListener("keydown", e => {
+  if (e.target instanceof HTMLInputElement) return;
+  if (e.key === " ") { e.preventDefault(); togglePause(); }
+  if (e.key.toLowerCase() === "r" && st.running) { newLayout(); addLog("New layout (R)"); }
+});
+
+// non-user events: animation, transition, focus/blur
+field.addEventListener("animationend", e => { if (e.animationName === "suck") e.target.remove(); });
+field.addEventListener("transitionend", e => { if (e.target.classList.contains("item")) e.target.style.transition = ""; });
+form.nick.addEventListener("focus", e => e.target.classList.add("focused"));
+form.nick.addEventListener("blur", e => e.target.classList.remove("focused"));
+window.addEventListener("blur", () => { if (st.running && !st.paused) togglePause(); });
+
+// custom event
+field.addEventListener("cleanedup", e => { addLog(`cleanedup event, level ${e.detail.level}`); finish(true); });
+
+// settings
+form.diff.addEventListener("change", e => { st.diff = parseFloat(e.target.value); });
+form.vol.addEventListener("input", e => { audio.volume = parseFloat(e.target.value); });
+audio.addEventListener("volumechange", () => beep(440));
+form.dark.addEventListener("change", e => document.documentElement.setAttribute("data-theme", e.target.checked ? "dark" : "light"));
+audio.volume = parseFloat(form.vol.value);
+</script>
+</body>
+</html>
